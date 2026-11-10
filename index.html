@@ -215,6 +215,19 @@ input.money { width: 92px; text-align: right; }
 
 /* ポイントと注意 */
 .tips summary { font-weight: 700; font-size: 15px; cursor: pointer; }
+.tips:not([open]) { padding-top: 10px; padding-bottom: 10px; }
+.tips-toggle { font-size: 12px; font-weight: 600; color: var(--primary); margin-left: 8px; }
+.tips-toggle::after { content: "クリックで開く"; }
+.tips[open] .tips-toggle::after { content: "閉じる"; }
+
+/* 初回の「ポイントと注意」ダイアログ */
+.dlg-tips { width: min(640px, calc(100vw - 32px)); max-height: 86vh; }
+.dlg-tips[open] { display: flex; flex-direction: column; }
+.dlg-title { font-size: 17px; margin: 0 0 4px; }
+.dlg-lead { margin: 0 0 10px; }
+.dlg-scroll { overflow-y: auto; min-height: 0; flex: 1; border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px 10px; }
+.dlg-tips .dlg-actions { align-items: center; }
+.dlg-tips .dlg-actions .hint { margin: 0 auto 0 0; }
 .tips-tag { font-size: 11px; font-weight: 600; background: #fff1cc; color: #8a5a00; padding: 1px 8px; border-radius: 999px; margin-left: 4px; }
 .tips-body { font-size: 13px; line-height: 1.7; }
 .tips-body h3 { font-size: 13.5px; margin: 10px 0 2px; color: var(--primary); }
@@ -490,8 +503,9 @@ fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
         <p class="muted" id="storageNote">入力内容はこの端末に自動で一時保存されます。「クラウドに保存」を押すとクラウドにも保存されます。</p>
       </div>
 
-      <details class="card tips" id="tips" open hidden>
-        <summary id="tipsTitle"></summary>
+      <!-- ふだんは閉じておき、見たいときに開く（初回は下の tipsDialog で全文を表示） -->
+      <details class="card tips" id="tips" hidden>
+        <summary><span aria-hidden="true">💡</span> <span id="tipsTitle"></span><span class="tips-toggle"></span></summary>
         <p class="tips-link" id="tipsModelLink" hidden><a href="#" target="_blank" rel="noopener">モデルコースを表示（PDF・別タブで開きます）</a></p>
         <div class="tips-body" id="tipsBody"></div>
       </details>
@@ -566,6 +580,17 @@ fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
       </div>
     </section>
   </main>
+
+  <!-- 初めて開いたときに1回だけ出す「ポイントと注意」。最後までスクロールすると「確認しました」を押せる -->
+  <dialog id="tipsDialog" class="dlg dlg-tips" aria-labelledby="tipsDialogTitle">
+    <h2 class="dlg-title" id="tipsDialogTitle"></h2>
+    <p class="hint dlg-lead">計画を立てる前に、必ず最後まで読みましょう。あとから作成画面の「💡」の欄でいつでも読み返せます。</p>
+    <div class="tips-body dlg-scroll" id="tipsDialogBody" tabindex="0"></div>
+    <div class="dlg-actions">
+      <span class="hint" id="tipsDialogHint">最後までスクロールすると押せます ↓</span>
+      <button type="button" class="btn btn-primary" id="tipsOk" disabled>確認しました</button>
+    </div>
+  </dialog>
 
   <dialog id="printDialog" class="dlg">
     <p><b>PDFを保存できません。</b>次の <span id="printDialogCount"></span> 件を入力・修正してください（赤い枠の欄です）。</p>
@@ -2740,6 +2765,49 @@ window.__startApp = function () {
     $('#tips').hidden = !common && !C.modelPdfUrl;
     $('#tipsTitle').textContent = fill(CFG.tipsTitle);
     $('#tipsBody').innerHTML = common;
+    $('#tipsDialogTitle').textContent = '💡 ' + fill(CFG.tipsTitle);
+    $('#tipsDialogBody').innerHTML = common;
+  }
+
+  // ---- 初回だけ「ポイントと注意」を表示する（読んだ印はこの端末の localStorage に保存）
+  // 文面が変わったら（先生が Tips を直したら）もう一度表示されるよう、文面から作った値を記録する
+  const TIPS_SEEN_KEY = 'bs-tips-seen';
+  function tipsSignature() {
+    const s = $('#tipsDialogBody').innerHTML;
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    return h.toString(36);
+  }
+  let tipsAcknowledged = false;
+  function showTipsOnce() {
+    if (!$('#tipsDialogBody').innerHTML) return;
+    if (lsGet(TIPS_SEEN_KEY) === tipsSignature()) return;
+    const dlg = $('#tipsDialog'), body = $('#tipsDialogBody'), ok = $('#tipsOk');
+    // 最後まで読んだら（スクロールしきったら）押せるようにする
+    const checkRead = function () {
+      if (body.scrollTop + body.clientHeight >= body.scrollHeight - 8) {
+        ok.disabled = false;
+        $('#tipsDialogHint').hidden = true;
+      }
+    };
+    body.addEventListener('scroll', checkRead);
+    window.addEventListener('resize', checkRead);
+    // Esc では閉じない（「確認しました」で閉じる）
+    dlg.addEventListener('cancel', function (e) { e.preventDefault(); });
+    dlg.addEventListener('close', function () {
+      if (!tipsAcknowledged) { dlg.showModal(); return; }
+      const first = levelInput(LEVELS.filter(levelOn)[0]);
+      if (first) first.focus();
+    });
+    ok.addEventListener('click', function () {
+      tipsAcknowledged = true;
+      lsSet(TIPS_SEEN_KEY, tipsSignature()); // すぐに記録（直後に閉じられても次回は出さない）
+      dlg.close();
+    });
+    dlg.showModal();
+    body.scrollTop = 0;
+    body.focus();
+    checkRead();
   }
 
   function init() {
@@ -2785,6 +2853,7 @@ window.__startApp = function () {
     renderPreview();
     $('#openBtn').addEventListener('click', openFromInputs);
     initUnits();
+    showTipsOnce();
   }
 
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { if (state.data) renderPreview(); });
